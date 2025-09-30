@@ -1,0 +1,76 @@
+name: Push в рабочую ветку - Обновление Dev сервера
+
+on:
+    push:
+        branches:
+            - '**'
+            - '!main'
+            - '!master'
+            - '!develop'
+
+env:
+    SERVICE_NAME: ${{ github.event.repository.name }}
+    SYSTEM_REPO: name-system
+    BRANCH_NAME: ${{ github.ref_name }}
+    AUTHOR_NAME: ${{ github.actor }}
+
+jobs:
+    update-dev-server:
+        runs-on: self-hosted
+
+        steps:
+            -   name: 📥 Checkout кода
+                uses: actions/checkout@v4
+                with:
+                    ref: ${{ github.ref }}
+                    fetch-depth: 0
+
+            -   name: 📋 Информация о пуше
+                run: |
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════╗"
+                    echo "║           ОБНОВЛЕНИЕ DEV СЕРВЕРА                           ║"
+                    echo "╚════════════════════════════════════════════════════════════╝"
+                    echo ""
+                    echo "📦 Сервис:      ${{ env.SERVICE_NAME }}"
+                    echo "🌿 Ветка:       ${{ env.BRANCH_NAME }}"
+                    echo "👤 Автор:       ${{ env.AUTHOR_NAME }}"
+                    echo "📝 Коммит:      ${{ github.sha }}"
+                    echo ""
+
+            -   name: ⚙️ Загрузка конфигурации dev сервера
+                run: |
+                    source .github/scripts/on-push-in-work-branch/load_config.sh
+                    load_dev_server_config
+
+            -   name: 🔄 Обновление ветки на dev сервере
+                id: update_step
+                run: |
+                    source .github/scripts/on-push-in-work-branch/update_branch.sh
+                    update_branch_on_server
+
+            -   name: 📋 Итоги обновления
+                if: always()
+                run: |
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════╗"
+                    echo "║                    ИТОГИ ОБНОВЛЕНИЯ                        ║"
+                    echo "╚════════════════════════════════════════════════════════════╝"
+                    echo ""
+                    echo "📦 Сервис:      ${{ env.SERVICE_NAME }}"
+                    echo "🌿 Ветка:       ${{ env.BRANCH_NAME }}"
+                    echo "👤 Автор:       ${{ env.AUTHOR_NAME }}"
+                    echo "🖥️  Dev сервер:  ${{ env.DEV_HOST }}"
+                    echo "🌐 Dev домен:   ${{ env.DEV_DOMAIN }}"
+                    echo ""
+                    echo "📊 Статус:      ${{ job.status }}"
+                    echo "🔄 Обновление:  ${{ steps.update_step.outcome }}"
+                    echo ""
+                    
+                    if [ "${{ job.status }}" == "success" ]; then
+                      echo "✅ Ветка успешно обновлена и приложение работает"
+                    else
+                      echo "❌ Обновление завершилось с ошибкой"
+                      echo "🔍 Логи: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    fi
+                    echo ""
