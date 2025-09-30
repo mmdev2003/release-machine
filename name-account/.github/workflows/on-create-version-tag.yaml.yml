@@ -1,0 +1,159 @@
+name: Деплой версионного тега на stage сервер
+
+on:
+    create:
+        tags:
+            - 'v*'
+
+env:
+    SERVICE_NAME: ${{ github.event.repository.name }}
+    SYSTEM_REPO: name-system
+    TAG_NAME: ${{ github.ref_name }}
+
+jobs:
+    deploy-to-stage:
+        runs-on: self-hosted
+        if: github.event.ref_type == 'tag'
+
+        steps:
+            -   name: 📥 Checkout кода
+                uses: actions/checkout@v4
+                with:
+                    ref: ${{ github.ref }}
+                    fetch-depth: 0
+
+            -   name: ✅ Валидация формата тега
+                run: |
+                    echo ""
+                    echo "─────────────────────────────────────────"
+                    echo "Валидация тега"
+                    echo "─────────────────────────────────────────"
+                    
+                    if [[ ! "${{ env.TAG_NAME }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+.*$ ]]; then
+                      echo "❌ Неверный формат: ${{ env.TAG_NAME }}"
+                      echo "   Ожидается: v1.0.0"
+                      exit 1
+                    fi
+                    
+                    echo "✅ Формат корректен: ${{ env.TAG_NAME }}"
+                    TAG_NAME=${GITHUB_REF#refs/tags/}
+                    echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+                    echo "::notice title=Тег::$TAG_NAME"
+                    echo ""
+
+            -   name: ⚙️ Загрузка конфигурации
+                run: |
+                    source .github/scripts/on-create-version-tag/load_config.sh
+                    load_server_config
+
+            -   name: 📝 Создание записи о релизе
+                run: |
+                    source .github/scripts/on-create-version-tag/release_tg_bot_api.sh
+                    create_release_record
+
+            -   name: 🗄️ Обновление баз данных
+                continue-on-error: true
+                id: refresh_db_step
+                run: |
+                    source .github/scripts/on-create-version-tag/refresh_db.sh
+                    refresh_all_databases
+
+            -   name: 🚀 Деплой на stage сервер
+                id: deploy_step
+                run: |
+                    source .github/scripts/on-create-version-tag/release_tg_bot_api.sh
+                    source .github/scripts/on-create-version-tag/deploy.sh
+                    
+                    update_release_status "stage_building"
+                    deploy_to_server
+
+            -   name: 💾 Тестирование отката
+                id: rollback_test_step
+                if: steps.deploy_step.outcome == 'success'
+                run: |
+                    source .github/scripts/on-create-version-tag/release_tg_bot_api.sh
+                    source .github/scripts/on-create-version-tag/rollback.sh
+                    
+                    echo ""
+                    echo "─────────────────────────────────────────"
+                    echo "Поиск предыдущего тега для теста отката"
+                    echo "─────────────────────────────────────────"
+                    
+                    PREVIOUS_TAG=$(sshpass -p "$STAGE_PASSWORD" ssh -o StrictHostKeyChecking=no root@$STAGE_HOST -p 22 \
+                        "cat /tmp/${{ env.SERVICE_NAME }}_previous_tag.txt 2>/dev/null || echo ''")
+                    
+                    if [ -z "$PREVIOUS_TAG" ]; then
+                      echo "⚠️  Предыдущий тег не найден"
+                      echo "   Пропускаем тест отката (возможно, первый деплой)"
+                      echo "ROLLBACK_SKIPPED=true" >> $GITHUB_ENV
+                    else
+                      echo "✅ Найден тег: $PREVIOUS_TAG"
+                      echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_ENV
+                      echo "ROLLBACK_SKIPPED=false" >> $GITHUB_ENV
+                    
+                      rollback_with_status_tracking
+                    fi
+                    update_release_status "manual_testing"
+                    echo ""
+
+            -   name: 🎉 Уведомление об успехе
+                if: success()
+                run: |
+                    source .github/scripts/on-create-version-tag/deploy.sh
+                    
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════╗"
+                    echo "║          ПАЙПЛАЙН ЗАВЕРШЕН УСПЕШНО! 🎉                    ║"
+                    echo "╚════════════════════════════════════════════════════════════╝"
+                    echo ""
+                    echo "✅ Тег ${{ env.TAG_NAME }} развернут на stage"
+                    echo "✅ Базы данных обновлены"
+                    echo "✅ Проверки работоспособности пройдены"
+                    
+                    verify_deployment_success
+                    
+                    if [ "${{ env.ROLLBACK_SKIPPED }}" == "false" ]; then
+                      echo "✅ Откат протестирован (на ${{ env.PREVIOUS_TAG }})"
+                    else
+                      echo "⚠️  Откат не тестировался (первый деплой)"
+                    fi
+                    echo ""
+                    echo "👉 Следующий шаг: Ручное тестирование"
+                    echo "👉 После тестирования утвердите деплой на продакшн"
+                    echo ""
+
+            -   name: ❌ Уведомление об ошибке
+                if: failure()
+                run: |
+                    source .github/scripts/on-create-version-tag/deploy.sh
+                    source .github/scripts/on-create-version-tag/release_tg_bot_api.sh
+                    
+                    echo ""
+                    echo "╔════════════════════════════════════════════════════════════╗"
+                    echo "║          ПАЙПЛАЙН ЗАВЕРШЕН С ОШИБКОЙ! ❌                  ║"
+                    echo "╚════════════════════════════════════════════════════════════╝"
+                    echo ""
+                    
+                    handle_deployment_failure
+                    
+                    echo ""
+                    echo "─────────────────────────────────────────"
+                    echo "Определение статуса ошибки"
+                    echo "─────────────────────────────────────────"
+                    
+                    if [ "${{ steps.deploy_step.outcome }}" == "failure" ]; then
+                      echo "❌ Ошибка на этапе: Деплой"
+                      update_release_status "stage_building_failed"
+                    elif [ "${{ steps.rollback_test_step.outcome }}" == "failure" ]; then
+                      echo "❌ Ошибка на этапе: Тест отката"
+                      update_release_status "stage_test_rollback_failed"
+                    else
+                      echo "❌ Ошибка на неизвестном этапе"
+                      update_release_status "stage_building_failed"
+                    fi
+                    
+                    echo ""
+                    echo "🔍 Логи для диагностики:"
+                    echo "   GitHub Actions: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    echo "   Сервер: /var/log/deployments/${{ env.SERVICE_NAME }}/${{ env.TAG_NAME }}.log"
+                    echo ""
