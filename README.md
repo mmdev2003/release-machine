@@ -4,6 +4,6 @@
 - name-release-machine -- виновник всего торжества, инструмент, который позволяет в легкую сопровождать релизный цикл приложения
 
 в каждой папке смотрите файл README.md, начать советую отсюда:
-https://github.com/mmdev2003/release-machine/blob/main/name-release-machine/README.md
+https://github.com/mmdev2003/release-machine/tree/main/name-release-machine
 
 c большой вероятностью вам удастся запустить все это, так как я об этом позаботился <3
