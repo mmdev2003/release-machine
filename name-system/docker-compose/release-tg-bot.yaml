@@ -1,0 +1,44 @@
+x-logging: &default-logging
+    driver: "json-file"
+    options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+    net:
+        name: net
+        external: true
+
+services:
+    name-release-tg-bot-postgres:
+        image: postgres:17.6
+        container_name: "${NAME_RELEASE_TG_BOT_POSTGRES_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_RELEASE_TG_BOT_POSTGRES_VOLUME_DIR}:/var/lib/postgresql/data"
+        ports:
+            - "${NAME_RELEASE_TG_BOT_POSTGRES_PORT}:5432"
+        environment:
+            POSTGRES_DB: "${NAME_RELEASE_TG_BOT_POSTGRES_DB_NAME}"
+            POSTGRES_USER: "${NAME_RELEASE_TG_BOT_POSTGRES_USER}"
+            POSTGRES_PASSWORD: "${NAME_RELEASE_TG_BOT_POSTGRES_PASSWORD}"
+            PGDATA: /var/lib/postgresql/data/pgdata
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-release-tg-bot:
+        build:
+            context: "../../${NAME_RELEASE_TG_BOT_CONTAINER_NAME}"
+            dockerfile: "${NAME_RELEASE_TG_BOT_DOCKERFILE_DIR}/Dockerfile"
+        container_name: "${NAME_RELEASE_TG_BOT_CONTAINER_NAME}"
+        env_file:
+            - "../env/.env.app"
+            - "../env/.env.db"
+            - "../env/.env.monitoring"
+            - "../env/.env.runner"
+        ports:
+            - "${NAME_RELEASE_TG_BOT_PORT}:${NAME_RELEASE_TG_BOT_PORT}"
+        restart: unless-stopped
+        networks:
+            - net

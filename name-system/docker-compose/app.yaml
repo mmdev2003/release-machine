@@ -1,0 +1,35 @@
+networks:
+    net:
+        name: net
+        external: true  # Создается в docker-compose.db.yaml
+
+services:
+    name-account:
+        build:
+            context: "../../${NAME_ACCOUNT_CONTAINER_NAME}"
+            dockerfile: "${NAME_ACCOUNT_DOCKERFILE_DIR}/Dockerfile"
+        container_name: "${NAME_ACCOUNT_CONTAINER_NAME}"
+        env_file:
+            - "../env/.env.app"
+            - "../env/.env.db"
+            - "../env/.env.monitoring"
+        ports:
+            - "${NAME_ACCOUNT_PORT}:${NAME_ACCOUNT_PORT}"
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-authorization:
+        build:
+            context: "../../${NAME_AUTHORIZATION_CONTAINER_NAME}"
+            dockerfile: "${NAME_AUTHORIZATION_DOCKERFILE_DIR}/Dockerfile"
+        container_name: "${NAME_AUTHORIZATION_CONTAINER_NAME}"
+        env_file:
+            - "../env/.env.app"
+            - "../env/.env.db"
+            - "../env/.env.monitoring"
+        ports:
+            - "${NAME_AUTHORIZATION_PORT}:${NAME_AUTHORIZATION_PORT}"
+        restart: unless-stopped
+        networks:
+            - net

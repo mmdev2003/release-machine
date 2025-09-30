@@ -1,0 +1,159 @@
+x-logging: &default-logging
+    driver: "json-file"
+    options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+    net:
+        name: net
+        driver: bridge
+
+services:
+    name-account-postgres:
+        image: postgres:17.6
+        container_name: "${NAME_ACCOUNT_POSTGRES_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_ACCOUNT_POSTGRES_VOLUME_DIR}:/var/lib/postgresql/data"
+        ports:
+            - "${NAME_ACCOUNT_POSTGRES_PORT}:5432"
+        environment:
+            POSTGRES_DB: "${NAME_ACCOUNT_POSTGRES_DB_NAME}"
+            POSTGRES_USER: "${NAME_ACCOUNT_POSTGRES_USER}"
+            POSTGRES_PASSWORD: "${NAME_ACCOUNT_POSTGRES_PASSWORD}"
+            PGDATA: /var/lib/postgresql/data/pgdata
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-authorization-postgres:
+        image: postgres:17.6
+        container_name: "${NAME_AUTHORIZATION_POSTGRES_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_AUTHORIZATION_POSTGRES_VOLUME_DIR}:/var/lib/postgresql/data"
+        ports:
+            - "${NAME_AUTHORIZATION_POSTGRES_PORT}:5432"
+        environment:
+            POSTGRES_DB: "${NAME_AUTHORIZATION_POSTGRES_DB_NAME}"
+            POSTGRES_USER: "${NAME_AUTHORIZATION_POSTGRES_USER}"
+            POSTGRES_PASSWORD: "${NAME_AUTHORIZATION_POSTGRES_PASSWORD}"
+            PGDATA: /var/lib/postgresql/data/pgdata
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+
+    name-monitoring-redis:
+        image: redis:8.0.2
+        container_name: "${NAME_MONITORING_REDIS_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_MONITORING_REDIS_CONFIG_FILE}:/etc/redis/redis.conf"
+            - "../${NAME_MONITORING_REDIS_VOLUME_DIR}:/data"
+        ports:
+            - "${NAME_MONITORING_REDIS_PORT}:6379"
+        command: "redis-server /etc/redis/redis.conf"
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-loki:
+        image: grafana/loki:3.5.1
+        container_name: "${NAME_LOKI_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_LOKI_CONFIG_FILE}:/etc/loki/loki.yaml:ro"
+            - "../${NAME_LOKI_VOLUME_DIR}:/loki"
+        ports:
+            - "${NAME_LOKI_HTTP_PORT}:${NAME_LOKI_HTTP_PORT}"
+            - "${NAME_LOKI_GRPC_PORT}:${NAME_LOKI_GRPC_PORT}"
+        command: [ "-config.file=/etc/loki/loki.yaml" ]
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-tempo:
+        image: grafana/tempo:2.7.2
+        container_name: "${NAME_TEMPO_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_TEMPO_CONFIG_FILE}:/etc/tempo/tempo.yaml:ro"
+            - "../${NAME_TEMPO_VOLUME_DIR}:/var/tempo"
+        ports:
+            - "${NAME_TEMPO_HTTP_PORT}:${NAME_TEMPO_HTTP_PORT}"
+            - "${NAME_TEMPO_GRPC_PORT}:${NAME_TEMPO_GRPC_PORT}"
+            - "${NAME_TEMPO_OTLP_HTTP_PORT}:${NAME_TEMPO_OTLP_HTTP_PORT}"
+            - "${NAME_TEMPO_OTLP_GRPC_PORT}:${NAME_TEMPO_OTLP_GRPC_PORT}"
+        command: [ "-config.file=/etc/tempo/tempo.yaml" ]
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-victoria-metrics:
+        image: victoriametrics/victoria-metrics:v1.118.0
+        container_name: "${NAME_VICTORIA_METRICS_CONTAINER_NAME}"
+        volumes:
+            - "../${NAME_VICTORIA_METRICS_VOLUME_DIR}:/victoria-metrics-data"
+        ports:
+            - "${NAME_VICTORIA_METRICS_HTTP_PORT}:${NAME_VICTORIA_METRICS_HTTP_PORT}"
+        command:
+            - '-storageDataPath=/victoria-metrics-data'
+            - '-retentionPeriod=30d'
+            - '-httpListenAddr=:8428'
+            - '-memory.allowedPercent=80'
+            - '-search.maxUniqueTimeseries=1000000'
+            - '-search.maxQueryDuration=120s'
+        logging: *default-logging
+        restart: unless-stopped
+        networks:
+            - net
+
+    name-weed-master:
+        image: chrislusf/seaweedfs
+        logging: *default-logging
+        container_name: name-weed-master
+        ports:
+            - "${NAME_WEED_MASTER_PORT}:${NAME_WEED_MASTER_PORT}"
+        command: "master"
+        networks:
+            - net
+
+    name-weed-volume:
+        image: chrislusf/seaweedfs:latest
+        container_name: name-weed-volume
+        command: >
+            volume 
+            -mserver="${NAME_WEED_MASTER_CONTAINER_NAME}:${NAME_WEED_MASTER_PORT}" 
+            -ip.bind=0.0.0.0 
+            -port=8080 
+            -dir="/data"
+            -max=10
+            -metricsPort=9325
+            -dataCenter=dc1
+            -rack=rack2
+        volumes:
+            - "../${NAME_WEED_VOLUME_DIR}:/data"
+        depends_on:
+            - name-weed-master
+        networks:
+            - net
+        restart: unless-stopped
+        logging: *default-logging
+
+    name-weed-filer:
+        image: chrislusf/seaweedfs:latest
+        container_name: name-weed-filer
+        command: >
+            filer 
+            -master="${NAME_WEED_MASTER_CONTAINER_NAME}:${NAME_WEED_MASTER_PORT}"
+            -ip.bind=0.0.0.0 
+            -metricsPort=9327
+        depends_on:
+            - name-weed-master
+            - name-weed-volume
+        networks:
+            - net
+        restart: unless-stopped
+        logging: *default-logging
